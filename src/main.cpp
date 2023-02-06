@@ -1,4 +1,5 @@
 #include "WiFiManager.h"
+#include "envs.h"
 #define SOUND_SPEED 0.034
 #define CM_TO_INCH 0.393701
 
@@ -12,31 +13,10 @@ void setupFeederPins()
   pinMode(ECHO_PIN, INPUT);  // Sets the echoPin as an Input
 }
 
-void setup()
+void initWifiManager()
 {
-  // WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
-  // it is a good practice to make sure your code sets wifi mode how you want it.
-
-  // put your setup code here, to run once:
-
-  //
-  setupFeederPins();
-
-  // WiFiManager, Local intialization. Once its business is done, there is no need to keep it around
   WiFiManager wm;
-
-  // reset settings - wipe stored credentials for testing
-  // these are stored by the esp library
   wm.resetSettings();
-
-  // Disable automatic redirection to Portal
-  // wm.setCaptivePortalEnable(false);
-
-  // Automatically connect using saved credentials,
-  // if connection fails, it starts an access point with the specified name ( "AutoConnectAP"),
-  // if empty will auto generate SSID, if password is blank it will be anonymous AP (wm.autoConnect())
-  // then goes into a blocking loop awaiting configuration and will return success result
-
   bool res;
 
   String apName = "MurtaFeeder_";
@@ -44,7 +24,7 @@ void setup()
   chipId.toUpperCase();
   apName += chipId;
 
-  res = wm.autoConnect(apName.c_str(), "MurtaFeeder1234"); // password protected ap
+  res = wm.autoConnect(apName.c_str(), "MurtaFeeder1234");
 
   if (!res)
   {
@@ -56,6 +36,17 @@ void setup()
     // if you get here you have connected to the WiFi
     Serial.println("connected...yeey :)");
   }
+}
+
+void connectMQTT()
+{
+}
+
+void setup()
+{
+  setupFeederPins();
+  initWifiManager();
+  connectMQTT();
 }
 
 void getFeederStatus()
@@ -82,7 +73,6 @@ void getFeederStatus()
 
 void loop()
 {
-  // put your main code here, to run repeatedly:
   getFeederStatus();
   delay(5000);
 }
