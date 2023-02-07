@@ -68,7 +68,7 @@ void initWifiManager()
   else
   {
     // if you get here you have connected to the WiFi
-    Serial.println("connected...yeey :)");
+    Serial.println("WiFi Connected");
   }
 }
 
@@ -76,16 +76,24 @@ WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 String feederTopic;
 
-void dispense(int portions)
+void dispense(int portions, StaticJsonDocument<64> event)
 {
+
   while (portions > 0)
   {
     myServo.write(0);
-    delay(700);
+    delay(660);
     myServo.write(SERVO_STOP);
     portions--;
     delay(250);
   }
+
+  String topic = feederTopic + "/done";
+
+  String message;
+  serializeJson(event, message);
+
+  mqttClient.publish(topic.c_str(), message.c_str());
 }
 
 void mqttConsumer(char *topic, byte *payload, unsigned int length)
@@ -93,8 +101,8 @@ void mqttConsumer(char *topic, byte *payload, unsigned int length)
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
-  // NO TOPIC (at the moment) CHECK, ONLY SUSCRIBED TO 1 TOPIC
-  StaticJsonDocument<48> doc;
+  // NO TOPIC CHECK (at the moment), ONLY SUSCRIBED TO 1 TOPIC
+  StaticJsonDocument<64> doc;
 
   DeserializationError error = deserializeJson(doc, payload, length);
 
@@ -111,10 +119,7 @@ void mqttConsumer(char *topic, byte *payload, unsigned int length)
   {
   case DISPENSE:
     int portions = doc["portions"];
-    Serial.print("DISPENSE ");
-    Serial.print(portions);
-    Serial.println("PORTIONS");
-    dispense(portions);
+    dispense(portions, doc);
   }
 }
 
@@ -141,11 +146,11 @@ void connectMQTT()
 
   String topic = feederTopic + "/action";
 
-  Serial.print("SUSCRIBED TO ");
+  Serial.print("Suscribed to ");
   Serial.print(topic);
 
   boolean res = mqttClient.subscribe(topic.c_str());
-  Serial.print(" (");
+  Serial.print(" (Sub Status:");
   Serial.print(res);
   Serial.println(")");
 
@@ -168,9 +173,15 @@ void setup()
   initMQTT();
 }
 
+bool status_flag = true;
+
 void getFeederStatus()
 {
-
+  if (!status_flag)
+  {
+    status_flag = true;
+    return;
+  }
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -198,19 +209,21 @@ void getFeederStatus()
 
   String topic = feederTopic + "/status";
 
+  Serial.print("Feeder Status sent to ");
+  Serial.println(topic);
   mqttClient.publish(topic.c_str(), json.c_str());
-  delay(5000);
+
+  status_flag = false;
 }
 
 void loop()
 {
   if (!mqttClient.connected())
   {
-    Serial.println("MQTT Not connected");
+    Serial.println("MQTT Disconnected : Trying connection");
     connectMQTT();
   }
-  int loopResult = mqttClient.loop();
-  Serial.print("MQTT CLIENT LOOP RESULT ");
-  Serial.println(loopResult);
+  mqttClient.loop();
   getFeederStatus();
+  delay(2000);
 }
