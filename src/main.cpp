@@ -1,30 +1,64 @@
-#include "WiFiManager.h"
+#include <WiFiManager.h>
+#include <PubSubClient.h>
+#include <time.h>
+#include <ArduinoJson.h>
+#include <ESP32Servo.h>
 #include "envs.h"
+#include "dimensions.h"
+#include "actions.h"
+
 #define SOUND_SPEED 0.034
 #define CM_TO_INCH 0.393701
 
 const int TRIG_PIN = 13;
 const int ECHO_PIN = 12;
 
-void setupFeederPins()
+const int SERVO_PIN = 27;
+const int SERVO_STOP = 90;
+int speed = 5;
+
+unsigned long getTime()
 {
-  Serial.begin(115200);
-  pinMode(TRIG_PIN, OUTPUT); // Sets the trigPin as an Output
-  pinMode(ECHO_PIN, INPUT);  // Sets the echoPin as an Input
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    // Serial.println("Failed to obtain time");
+    return (0);
+  }
+  time(&now);
+  return now;
 }
 
-void initWifiManager()
-{
-  WiFiManager wm;
-  wm.resetSettings();
-  bool res;
+Servo myServo;
 
+String getFeederName()
+{
   String apName = "MurtaFeeder_";
   String chipId = String(WIFI_getChipId(), HEX);
   chipId.toUpperCase();
   apName += chipId;
 
-  res = wm.autoConnect(apName.c_str(), "MurtaFeeder1234");
+  return apName + "";
+}
+
+const String feederName = getFeederName();
+
+void setupFeederPins()
+{
+  Serial.begin(115200);
+  pinMode(TRIG_PIN, OUTPUT); // Sets the trigPin as an Output
+  pinMode(ECHO_PIN, INPUT);  // Sets the echoPin as an Input
+  myServo.attach(SERVO_PIN);
+}
+
+void initWifiManager()
+{
+  WiFiManager wm;
+  // wm.resetSettings();
+  bool res;
+
+  res = wm.autoConnect(feederName.c_str(), "MurtaFeeder1234");
 
   if (!res)
   {
@@ -38,41 +72,145 @@ void initWifiManager()
   }
 }
 
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+String feederTopic;
+
+void dispense(int portions)
+{
+  while (portions > 0)
+  {
+    myServo.write(0);
+    delay(700);
+    myServo.write(SERVO_STOP);
+    portions--;
+    delay(250);
+  }
+}
+
+void mqttConsumer(char *topic, byte *payload, unsigned int length)
+{
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  // NO TOPIC (at the moment) CHECK, ONLY SUSCRIBED TO 1 TOPIC
+  StaticJsonDocument<48> doc;
+
+  DeserializationError error = deserializeJson(doc, payload, length);
+
+  if (error)
+  {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  int actionID = doc["actionID"];
+
+  switch (actionID)
+  {
+  case DISPENSE:
+    int portions = doc["portions"];
+    Serial.print("DISPENSE ");
+    Serial.print(portions);
+    Serial.println("PORTIONS");
+    dispense(portions);
+  }
+}
+
 void connectMQTT()
 {
+  int attempts = 5;
+  while (attempts > 0 && !mqttClient.connected())
+  {
+    if (!mqttClient.connect(feederName.c_str()))
+    {
+      attempts--;
+      delay(5000);
+    }
+  }
+
+  if (attempts == 0)
+  {
+    ESP.restart();
+  }
+
+  Serial.println("MQTT Connected");
+
+  feederTopic = "murta/" + feederName;
+
+  String topic = feederTopic + "/action";
+
+  Serial.print("SUSCRIBED TO ");
+  Serial.print(topic);
+
+  boolean res = mqttClient.subscribe(topic.c_str());
+  Serial.print(" (");
+  Serial.print(res);
+  Serial.println(")");
+
+  mqttClient.setCallback(mqttConsumer);
+}
+
+void initMQTT()
+{
+
+  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+  connectMQTT();
 }
 
 void setup()
 {
+  delay(10000);
   setupFeederPins();
   initWifiManager();
-  connectMQTT();
+  configTime(0, 0, "pool.ntp.org");
+  initMQTT();
 }
 
 void getFeederStatus()
 {
-  // Clears the trigPin
+
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
-  // Sets the trigPin on HIGH state for 10 micro seconds
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  // Reads the echoPin, returns the sound wave travel time in microseconds
   long duration = pulseIn(ECHO_PIN, HIGH);
-  Serial.print("Duration (long): ");
-  Serial.println(duration);
-  // Calculate the distance
   float distanceCm = duration * SOUND_SPEED / 2;
 
-  // Prints the distance in the Serial Monitor
-  Serial.print("Distance (cm): ");
-  Serial.println(distanceCm);
+  // Impossible to get more than 20cm (30 for margin)
+  if (distanceCm > 30)
+  {
+    distanceCm = 0;
+  }
+
+  float capacity = (FEEDER_STORE_HEIGHT - distanceCm) / 20;
+
+  StaticJsonDocument<32> doc;
+
+  doc["timestamp"] = getTime();
+  doc["capacity"] = capacity;
+
+  String json;
+  serializeJson(doc, json);
+
+  String topic = feederTopic + "/status";
+
+  mqttClient.publish(topic.c_str(), json.c_str());
+  delay(5000);
 }
 
 void loop()
 {
+  if (!mqttClient.connected())
+  {
+    Serial.println("MQTT Not connected");
+    connectMQTT();
+  }
+  int loopResult = mqttClient.loop();
+  Serial.print("MQTT CLIENT LOOP RESULT ");
+  Serial.println(loopResult);
   getFeederStatus();
-  delay(5000);
 }
