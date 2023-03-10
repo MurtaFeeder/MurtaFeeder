@@ -128,7 +128,7 @@ void connectMQTT()
   int attempts = 5;
   while (attempts > 0 && !mqttClient.connected())
   {
-    if (!mqttClient.connect(feederName.c_str()))
+    if (!mqttClient.connect(feederName.c_str(), MQTT_USER, MQTT_PSWD))
     {
       attempts--;
       delay(5000);
@@ -142,7 +142,7 @@ void connectMQTT()
 
   Serial.println("MQTT Connected");
 
-  feederTopic = "murta/" + feederName;
+  feederTopic = "murta/feeder/" + feederName;
 
   String topic = feederTopic + "/action";
 
