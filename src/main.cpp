@@ -189,9 +189,12 @@ void getFeederStatus()
   digitalWrite(TRIG_PIN, LOW);
 
   long duration = pulseIn(ECHO_PIN, HIGH);
-  float distanceCm = duration * SOUND_SPEED / 2;
+  if (duration >= 60000)
+  {
+    duration = 0;
+  }
 
-  // Impossible to get more than 20cm (30 for margin)
+  float distanceCm = duration * SOUND_SPEED / 2;
   if (distanceCm > 30)
   {
     distanceCm = 0;
