@@ -113,7 +113,7 @@ void mqttConsumer(char *topic, byte *payload, unsigned int length)
     return;
   }
 
-  int actionID = doc["actionID"];
+  int actionID = doc["actionId"];
 
   switch (actionID)
   {
