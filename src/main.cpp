@@ -8,17 +8,20 @@
 #define FEEDER_HEIGHT 20
 #define SOUND_SPEED 0.034
 #define CM_TO_INCH 0.393701
-#define TRIG_PIN 13
-#define ECHO_PIN 12
+#define TRIG_PIN 23
+#define ECHO_PIN 22
 #define BUTTON_PIN 33
 #define BUTTON_DEBOUNCE 50
-#define MIN_DISPENSE_PRESS_TIME 1500
-#define MAX_DISPENSE_PRESS_TIME 4000
-#define MAX_CONFIRM_DISPENSE_TIME 10000
+#define MIN_DISPENSE_PRESS_TIME 2000    // 2 seconds
+#define MAX_DISPENSE_PRESS_TIME 4000    // 4 seconds
+#define MAX_CONFIRM_DISPENSE_TIME 10000 // 10 seconds
 #define LONG_PRESS_TIME 7000
 #define SERVO_PIN 27
 #define SERVO_STOP 90
 #define SERVO_SPEED 5
+#define LOW_LEVEL_INTERVAL 21600000 // 6 hours
+#define POWER_LED 5
+#define CONN_LED 18
 
 #define MAX_JSON_LENGTH 200
 
@@ -44,8 +47,15 @@ const String lowerFeederName = getFeederName(true);
 WiFiManager wm;
 /* -------- */
 
+/* CONN LED */
+int connLedState = LOW;
+/* ------- */
+
 /* STATUS VARS */
 unsigned long lastStatusTime = 0;
+/* low level */
+unsigned long lastLowLevelTime = 0;
+bool lowLevelWarningStarted = false;
 /* --------- */
 
 /* BUTTON  VARS*/
@@ -62,6 +72,7 @@ PubSubClient mqttClient(espClient);
 String feederSubTopic;
 String feederPubActionDoneTopic;
 String feederPubStatusTopic;
+String feederPubLowLevelTopic;
 /* ------- */
 
 /* DISPENSE TASK VARS */
@@ -77,6 +88,9 @@ struct DispenseParams
 void setupFeederPins()
 {
   Serial.begin(115200);
+  /* LEDS */
+  pinMode(POWER_LED, OUTPUT);
+  pinMode(CONN_LED, OUTPUT);
   /* PROXIMITY SENSOR */
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
@@ -88,6 +102,9 @@ void setupFeederPins()
   /* SERVO */
   myServo.attach(SERVO_PIN);
   /* ----- */
+
+  /* TURN ON RED LIGHT */
+  digitalWrite(POWER_LED, HIGH);
 }
 
 void initWifiManager()
@@ -172,24 +189,36 @@ void mqttConsumer(char *topic, byte *payload, unsigned int length)
 
 void connectMQTT()
 {
-#ifdef DEBUG
-  Serial.print("[MQTT] Connecting to MQTT broker...");
-#endif
   while (!mqttClient.connected())
   {
+#ifdef DEBUG
+    Serial.print("[MQTT] Connecting to MQTT broker...");
+#endif
     if (mqttClient.connect(feederName.c_str(), MQTT_USER, MQTT_PSWD))
     {
 #ifdef DEBUG
       Serial.println("\n[MQTT] Connected to MQTT broker!");
 #endif
+      if (connLedState == LOW)
+      {
+
+        digitalWrite(CONN_LED, HIGH);
+        connLedState = HIGH;
+      }
       mqttClient.subscribe(feederSubTopic.c_str());
     }
     else
     {
-#ifdef DEBUG
-      Serial.print("[MQTT] Connecting to MQTT broker...");
-#endif
-      delay(5000);
+      if (connLedState == HIGH)
+      {
+        connLedState = LOW;
+      }
+      else
+      {
+        // connLedState == LOW
+        connLedState = HIGH;
+      }
+      digitalWrite(CONN_LED, connLedState);
     }
   }
 }
@@ -201,6 +230,7 @@ void loadMQTTTopics()
   feederSubTopic = baseTopic + "/action";
   feederPubActionDoneTopic = baseTopic + "/done";
   feederPubStatusTopic = baseTopic + "/status";
+  feederPubLowLevelTopic = baseTopic + "/low";
 #ifdef DEBUG
   Serial.printf("[MQTT] Topics Loaded:\n*Sub Topic:%s\n*Pub Action Done Topic:%s\n*Pub Status Topic:%s\n", feederSubTopic.c_str(), feederPubActionDoneTopic.c_str(), feederPubStatusTopic.c_str());
 #endif
@@ -227,8 +257,10 @@ void setup()
 
 void getFeederStatus()
 {
-  unsigned long timeDiff = millis() - lastStatusTime;
+  unsigned long currentTime = millis();
+  unsigned long timeDiff = currentTime - lastStatusTime;
 
+  // When low level notification is required, we can assume that the check will be done every 5 seconds
   if (timeDiff < 4900)
   {
     return;
@@ -265,13 +297,34 @@ void getFeederStatus()
   }
 
   StaticJsonDocument<16> doc;
-
   doc["capacity"] = capacity;
-
   String json;
   serializeJson(doc, json);
 
   mqttClient.publish(feederPubStatusTopic.c_str(), json.c_str());
+
+  const bool isLowLevel = capacity < 0.2;
+  /* LOW LEVEL START */
+  // First warning -> start process
+  if (isLowLevel && !lowLevelWarningStarted && mqttClient.publish(feederPubLowLevelTopic.c_str(), json.c_str()))
+  {
+    lowLevelWarningStarted = true;
+    lastLowLevelTime = currentTime;
+    Serial.printf("Low level message sent %lu\n", currentTime);
+  }
+  // Process already started & still low
+  else if (isLowLevel && lowLevelWarningStarted && (currentTime - lastLowLevelTime) >= LOW_LEVEL_INTERVAL && mqttClient.publish(feederPubLowLevelTopic.c_str(), json.c_str()))
+  {
+    lastLowLevelTime = currentTime;
+    Serial.printf("Low level message sent %lu\n", currentTime);
+  }
+  // Cancel process
+  else if (lowLevelWarningStarted && !isLowLevel)
+  {
+    lowLevelWarningStarted = false;
+    lastLowLevelTime = 0;
+  }
+  /* LOW LEVEL END */
 }
 
 void resetConfirmState()
@@ -350,7 +403,7 @@ void loop()
 #endif
     connectMQTT();
   }
-  mqttClient.loop();
   getFeederStatus();
   handleButtonPress();
+  mqttClient.loop();
 }
