@@ -8,20 +8,20 @@
 #define FEEDER_HEIGHT 20
 #define SOUND_SPEED 0.034
 #define CM_TO_INCH 0.393701
-#define TRIG_PIN 23
-#define ECHO_PIN 22
-#define BUTTON_PIN 33
+#define TRIG_PIN 22
+#define ECHO_PIN 23
+#define BUTTON_PIN 4
 #define BUTTON_DEBOUNCE 50
 #define MIN_DISPENSE_PRESS_TIME 2000    // 2 seconds
 #define MAX_DISPENSE_PRESS_TIME 4000    // 4 seconds
 #define MAX_CONFIRM_DISPENSE_TIME 10000 // 10 seconds
 #define LONG_PRESS_TIME 7000
-#define SERVO_PIN 27
+#define SERVO_PIN 21
 #define SERVO_STOP 90
 #define SERVO_SPEED 5
 #define LOW_LEVEL_INTERVAL 21600000 // 6 hours
-#define POWER_LED 5
-#define CONN_LED 18
+#define POWER_LED_PIN 5
+#define CONN_LED_PIN 18
 
 #define MAX_JSON_LENGTH 200
 
@@ -89,8 +89,8 @@ void setupFeederPins()
 {
   Serial.begin(115200);
   /* LEDS */
-  pinMode(POWER_LED, OUTPUT);
-  pinMode(CONN_LED, OUTPUT);
+  pinMode(POWER_LED_PIN, OUTPUT);
+  pinMode(CONN_LED_PIN, OUTPUT);
   /* PROXIMITY SENSOR */
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
@@ -103,14 +103,17 @@ void setupFeederPins()
   myServo.attach(SERVO_PIN);
   /* ----- */
 
-  /* TURN ON RED LIGHT */
-  digitalWrite(POWER_LED, HIGH);
+  /* TURN ON POWER LED LIGHT */
+  digitalWrite(POWER_LED_PIN, HIGH);
+  /* TURN OFF CONN LED LIGTH */
+  digitalWrite(CONN_LED_PIN, LOW);
 }
 
 void initWifiManager()
 {
   bool res;
 
+  wm.setCaptivePortalEnable(false);
   res = wm.autoConnect(feederName.c_str(), "MurtaFeeder1234");
 
   if (!res)
@@ -202,7 +205,7 @@ void connectMQTT()
       if (connLedState == LOW)
       {
 
-        digitalWrite(CONN_LED, HIGH);
+        digitalWrite(CONN_LED_PIN, HIGH);
         connLedState = HIGH;
       }
       mqttClient.subscribe(feederSubTopic.c_str());
@@ -218,7 +221,7 @@ void connectMQTT()
         // connLedState == LOW
         connLedState = HIGH;
       }
-      digitalWrite(CONN_LED, connLedState);
+      digitalWrite(CONN_LED_PIN, connLedState);
     }
   }
 }
@@ -296,8 +299,9 @@ void getFeederStatus()
     capacity = 0;
   }
 
-  StaticJsonDocument<16> doc;
+  StaticJsonDocument<96> doc;
   doc["capacity"] = capacity;
+  doc["feederId"] = lowerFeederName;
   String json;
   serializeJson(doc, json);
 
@@ -310,13 +314,11 @@ void getFeederStatus()
   {
     lowLevelWarningStarted = true;
     lastLowLevelTime = currentTime;
-    Serial.printf("Low level message sent %lu\n", currentTime);
   }
   // Process already started & still low
   else if (isLowLevel && lowLevelWarningStarted && (currentTime - lastLowLevelTime) >= LOW_LEVEL_INTERVAL && mqttClient.publish(feederPubLowLevelTopic.c_str(), json.c_str()))
   {
     lastLowLevelTime = currentTime;
-    Serial.printf("Low level message sent %lu\n", currentTime);
   }
   // Cancel process
   else if (lowLevelWarningStarted && !isLowLevel)
