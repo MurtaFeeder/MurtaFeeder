@@ -5,7 +5,7 @@
 #include <ezButton.h>
 #include "envs.h"
 
-#define FEEDER_HEIGHT 20
+#define FEEDER_HEIGHT 27
 #define SOUND_SPEED 0.034
 #define CM_TO_INCH 0.393701
 #define TRIG_PIN 22
@@ -277,19 +277,31 @@ void getFeederStatus()
   digitalWrite(TRIG_PIN, LOW);
 
   long duration = pulseIn(ECHO_PIN, HIGH);
+#if DEBUG
+  Serial.printf("[FEEDER STATUS] Duration obtained : %ld\n", duration);
+#endif
+
   if (duration >= 60000)
   {
     duration = 0;
   }
 
   float distanceCm = duration * SOUND_SPEED / 2;
-  if (distanceCm > 30)
-  {
-    distanceCm = 0;
-  }
 
-  float capacity = (FEEDER_HEIGHT - distanceCm) / 20;
+#if DEBUG
+  Serial.printf("[FEEDER STATUS] Distance calculated : %f\n", distanceCm);
+#endif
 
+  distanceCm = distanceCm > FEEDER_HEIGHT ? FEEDER_HEIGHT : distanceCm;
+#if DEBUG
+  Serial.printf("[FEEDER STATUS] Final Distance calculated : %f\n", distanceCm);
+#endif
+
+  float capacity = (FEEDER_HEIGHT - distanceCm) / FEEDER_HEIGHT;
+
+#if DEBUG
+  Serial.printf("[FEEDER STATUS] Capacity : %f\n\n", capacity);
+#endif
   if (capacity > 1)
   {
     capacity = 1;
